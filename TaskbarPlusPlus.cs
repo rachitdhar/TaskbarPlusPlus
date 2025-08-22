@@ -179,6 +179,29 @@ namespace TaskbarPlusPlus
             DockPanel.SetDock(closeBtn, _dockPosition == DockPosition.TOP ? Dock.Right : Dock.Top);
             dock.Children.Add(closeBtn);
 
+            // Clock label
+            var clockText = new TextBlock
+            {
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = foregroundColor,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(4),
+                Text = DateTime.Now.ToString("HH:mm")       // 24-hour format
+            };
+            DockPanel.SetDock(clockText, _dockPosition == DockPosition.TOP ? Dock.Right : Dock.Top);
+            dock.Children.Add(clockText);
+
+            var clockTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(30)
+            };
+            clockTimer.Tick += (_, __) =>
+            {
+                clockText.Text = DateTime.Now.ToString("HH:mm");
+            };
+            clockTimer.Start();
+
             // toggle switch for dock position
             var switchBtn = new Button
             {
@@ -277,6 +300,9 @@ namespace TaskbarPlusPlus
                 {
                     if (elem is Button)
                         ((Button)elem).Foreground = newForeground;
+
+                    if (elem is TextBlock)
+                        ((TextBlock)elem).Foreground = newForeground;
                 }
             };
             DockPanel.SetDock(colorToggleBtn, _dockPosition == DockPosition.TOP ? Dock.Left : Dock.Bottom);
