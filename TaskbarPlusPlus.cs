@@ -1,9 +1,5 @@
-﻿// Single-file WPF app that creates a transparent, vertical taskbar (appbar) on the left edge.
-// It lists icons for currently open top-level windows and lets you activate them by clicking.
-// Build: dotnet new wpf -n LeftDockBar (then replace the generated App.xaml/App.xaml.cs/MainWindow* with this single file and update csproj to UseWPF)
-// Or compile as a single-file program if your tooling supports it.
-
-using System.IO;
+﻿using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -27,7 +23,7 @@ namespace TaskbarPlusPlus
 
             app.Startup += (_, __) =>
             {
-                var win = new DockBarWindow(DockPosition.TOP);
+                var win = new DockBarWindow();
                 win.Show();
             };
             app.Run();
@@ -40,17 +36,34 @@ namespace TaskbarPlusPlus
         LEFT
     }
 
+    public enum TaskbarSize
+    {
+        SMALL,
+        BIG
+    }
+
+    public enum BarBackgroundColor
+    {
+        TRANSPARENT,
+        GREY,
+        WHITE,
+        BLACK
+    }
+
     public class DockBarWindow : Window
     {
-        private const int BarWidth = 72; // px
         private readonly StackPanel _stack;
         private readonly DispatcherTimer _refreshTimer;
         private HwndSource _hwndSource;
         private IntPtr _hwnd;
         private bool _appbarRegistered = false;
 
-        // to control the docking position of the task bar
         private DockPosition _dockPosition;
+        private TaskbarSize _taskbarSize;
+        private BarBackgroundColor _barBackgroundColor;
+
+        private int BarWidth;
+        private int IconSize;
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
@@ -98,23 +111,46 @@ namespace TaskbarPlusPlus
             int cmd = TrackPopupMenu(hMenu, TPM_LEFTALIGN | TPM_RETURNCMD,
                                      pt.X, pt.Y, 0, _hwnd, IntPtr.Zero);
 
-            if (cmd != 0)
-            {
-                SendMessage(targetHwnd, WM_SYSCOMMAND, (IntPtr)cmd, IntPtr.Zero);
-            }
+            if (cmd != 0) SendMessage(targetHwnd, WM_SYSCOMMAND, (IntPtr)cmd, IntPtr.Zero);
         }
 
-        public DockBarWindow(DockPosition dockPosition = DockPosition.TOP)
+        private Brush GetBrushColor(BarBackgroundColor bgColor)
         {
+            return bgColor switch
+            {
+                BarBackgroundColor.TRANSPARENT => Brushes.Transparent,
+                BarBackgroundColor.WHITE => Brushes.GhostWhite,
+                BarBackgroundColor.GREY => Brushes.LightGray,
+                BarBackgroundColor.BLACK => Brushes.Black,
+                _ => Brushes.Transparent
+            };
+        }
+
+        public DockBarWindow(
+            DockPosition dockPosition = DockPosition.TOP,
+            TaskbarSize taskbarSize = TaskbarSize.SMALL,
+            BarBackgroundColor barBackgroundColor = BarBackgroundColor.TRANSPARENT
+        ) {
             _dockPosition = dockPosition;
+            _taskbarSize = taskbarSize;
+            _barBackgroundColor = barBackgroundColor;
+
+            Brush foregroundColor =
+                (_barBackgroundColor == BarBackgroundColor.TRANSPARENT || _barBackgroundColor == BarBackgroundColor.BLACK)
+                    ? Brushes.LightGray
+                    : Brushes.Black;
+
+            BarWidth = (_taskbarSize == TaskbarSize.SMALL) ? 60 : 72;
+            IconSize = (_taskbarSize == TaskbarSize.SMALL) ? 25 : 30;
+
             Title = "Taskbar++";
             Width = _dockPosition == DockPosition.TOP ? SystemParameters.WorkArea.Width : BarWidth;
-            Height = _dockPosition == DockPosition.TOP ? BarWidth : SystemParameters.WorkArea.Height; // initial, will be set by appbar
+            Height = _dockPosition == DockPosition.TOP ? BarWidth : SystemParameters.WorkArea.Height;
             Left = 0;
             Top = 0;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
-            Background = Brushes.Transparent;
+            Background = GetBrushColor(_barBackgroundColor);
             Topmost = true;
             ShowInTaskbar = false;
 
@@ -129,8 +165,9 @@ namespace TaskbarPlusPlus
                 Height = 28,
                 Margin = new Thickness(4),
                 Background = Brushes.Transparent,
+                Foreground = foregroundColor,
+                FontFamily = new FontFamily("Consolas"),
                 BorderBrush = Brushes.Transparent,
-                HorizontalAlignment = HorizontalAlignment.Right,
                 ToolTip = "Close Taskbar++"
             };
             closeBtn.Click += (_, __) =>
@@ -145,11 +182,13 @@ namespace TaskbarPlusPlus
             // toggle switch for dock position
             var switchBtn = new Button
             {
-                Content = "TOGGLE",
-                Width = 50,
+                Content = _dockPosition == DockPosition.TOP ? "TOP" : "LEFT",
+                Width = 40,
                 Height = 28,
                 Margin = new Thickness(4),
                 Background = Brushes.Transparent,
+                Foreground = foregroundColor,
+                FontFamily = new FontFamily("Consolas"),
                 BorderBrush = Brushes.Transparent,
                 ToolTip = "Toggle Dock Position"
             };
@@ -164,26 +203,96 @@ namespace TaskbarPlusPlus
                     _ => DockPosition.TOP
                 };
 
+                TaskbarSize originalSize = _taskbarSize;
+                BarBackgroundColor originalBackgroundColor = _barBackgroundColor;
                 this.Close();
 
                 // Create new window with new dock position
-                var win = new DockBarWindow(newDockPosition);
+                var win = new DockBarWindow(newDockPosition, originalSize, originalBackgroundColor);
                 win.Show();
             };
             DockPanel.SetDock(switchBtn, _dockPosition == DockPosition.TOP ? Dock.Left : Dock.Bottom);
             dock.Children.Add(switchBtn);
 
+            // a toggle for size
+            var sizeToggleBtn = new Button
+            {
+                Content = "+/-",
+                Width = 30,
+                Height = 28,
+                Margin = new Thickness(4),
+                Background = Brushes.Transparent,
+                Foreground = foregroundColor,
+                FontFamily = new FontFamily("Consolas"),
+                BorderBrush = Brushes.Transparent,
+                ToolTip = "Toggle Bar Size"
+            };
+
+            sizeToggleBtn.Click += (_, __) =>
+            {
+                TaskbarSize newSize = _taskbarSize == TaskbarSize.SMALL ? TaskbarSize.BIG : TaskbarSize.SMALL;
+
+                DockPosition originalPosition = _dockPosition;
+                BarBackgroundColor originalBackgroundColor = _barBackgroundColor;
+                this.Close();
+                var win = new DockBarWindow(originalPosition, newSize, originalBackgroundColor);
+                win.Show();
+            };
+            DockPanel.SetDock(sizeToggleBtn, _dockPosition == DockPosition.TOP ? Dock.Left : Dock.Bottom);
+            dock.Children.Add(sizeToggleBtn);
+
+            // a toggle for color
+            var colorToggleBtn = new Button
+            {
+                Content = ">>",
+                Width = 30,
+                Height = 30,
+                Margin = new Thickness(4),
+                Padding = new Thickness(4),
+                Background = Brushes.Transparent,
+                Foreground = foregroundColor,
+                FontFamily = new FontFamily("Consolas"),
+                BorderBrush = Brushes.Transparent,
+                ToolTip = "Toggle Bar Size"
+            };
+
+            colorToggleBtn.Click += (_, __) =>
+            {
+                _barBackgroundColor = _barBackgroundColor switch
+                {
+                    BarBackgroundColor.TRANSPARENT => BarBackgroundColor.GREY,
+                    BarBackgroundColor.GREY => BarBackgroundColor.WHITE,
+                    BarBackgroundColor.WHITE => BarBackgroundColor.BLACK,
+                    BarBackgroundColor.BLACK => BarBackgroundColor.TRANSPARENT,
+                    _ => BarBackgroundColor.TRANSPARENT
+                };
+
+                this.Background = GetBrushColor(_barBackgroundColor);
+                Brush newForeground =
+                (_barBackgroundColor == BarBackgroundColor.TRANSPARENT || _barBackgroundColor == BarBackgroundColor.BLACK)
+                    ? Brushes.LightGray
+                    : Brushes.Black;
+
+                foreach (var elem in ((DockPanel)this.Content).Children)
+                {
+                    if (elem is Button)
+                        ((Button)elem).Foreground = newForeground;
+                }
+            };
+            DockPanel.SetDock(colorToggleBtn, _dockPosition == DockPosition.TOP ? Dock.Left : Dock.Bottom);
+            dock.Children.Add(colorToggleBtn);
+
             // UI container
             var border = new Border
             {
-                CornerRadius = new CornerRadius(16),
+                CornerRadius = new CornerRadius(_taskbarSize == TaskbarSize.SMALL ? 8 : 16),
                 Margin = new Thickness(6, 8, 6, 8),
-                Padding = new Thickness(6),
-                Background = new SolidColorBrush(Color.FromArgb(48, 0, 0, 0)), // subtle translucent backdrop for legibility
+                Padding = new Thickness(_taskbarSize == TaskbarSize.SMALL ? 2 : 6),
+                Background = new SolidColorBrush(Color.FromArgb(20, 0, 0, 0)), // subtle translucent backdrop for legibility
                 Effect = new System.Windows.Media.Effects.DropShadowEffect
                 {
-                    BlurRadius = 10,
-                    ShadowDepth = 0,
+                    BlurRadius = 4,
+                    ShadowDepth = 4,
                     Opacity = 0.3
                 }
             };
@@ -370,17 +479,15 @@ namespace TaskbarPlusPlus
                     Padding = new Thickness(6),
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
-                    ToolTip = w.Title
+                    ToolTip = w.Title,
+                    Content = new Image
+                    {
+                        Width = IconSize,
+                        Height = IconSize,
+                        Stretch = Stretch.Uniform,
+                        Source = w.Icon ?? PlaceholderIcon()
+                    }
                 };
-
-                var img = new Image
-                {
-                    Width = 32,
-                    Height = 32,
-                    Stretch = Stretch.Uniform,
-                    Source = w.Icon ?? PlaceholderIcon()
-                };
-                btn.Content = img;
 
                 btn.Click += (_, __) =>
                 {
@@ -398,10 +505,10 @@ namespace TaskbarPlusPlus
             string startIconFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "resources/win_start_menu_icon.png");
             var startButton = new Button
             {
-                Width = 40,
-                Height = 40,
+                Width = IconSize + 15,
+                Height = IconSize + 15,
                 Margin = new Thickness(4),
-                Padding = new Thickness(0),
+                Padding = new Thickness(6),
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
                 Content = new Image
